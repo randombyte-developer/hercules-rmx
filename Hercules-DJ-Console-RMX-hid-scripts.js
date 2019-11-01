@@ -184,6 +184,9 @@ RMX.init = function() {
     RMX.makeConnectionAndTrigger(channel, "hotcue_1_enabled", sendFeedbackFunction("pitch_reset"));
     RMX.makeConnectionAndTrigger(channel, "hotcue_2_enabled", sendFeedbackFunction("beatlock"));
   }
+
+  engine.softTakeover("[Channel1]", "rate", true);
+  engine.softTakeover("[Channel2]", "rate", true);
 };
 
 RMX.jog = function(group, control, value, controlObject) {
