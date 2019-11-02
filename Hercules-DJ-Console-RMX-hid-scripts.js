@@ -30,6 +30,7 @@ RMX.jogSkip =  {
 
 RMX.shift = false; // controlled via source button
 RMX.crossfaderEnabled = true;
+RMX.rightRateFaderEnabled = true; // the fader is a little bit broken, play safe and provide a shutoff button
 
 // the actual mapping is defined in this function
 RMX.init = function() {
@@ -101,7 +102,12 @@ RMX.init = function() {
   RMX.capture("pitch_reset", "all", hotcueFunction(1));
   RMX.capture("beatlock", "all", hotcueFunction(2));
 
-  RMX.capture("filterHighKill", "all", setControlFunction());
+  RMX.capture("filterHighKill", "all", function(group, control, value) {
+    engine.setValue(group, control, value);
+    if (RMX.shift) {
+      RMX.rightRateFaderEnabled = !RMX.rightRateFaderEnabled;
+    }
+  });
   RMX.capture("filterMidKill", "all", setControlFunction());
   RMX.capture("filterLowKill", "all", setControlFunction());
 
@@ -159,13 +165,17 @@ RMX.init = function() {
 
   RMX.capture("jog", "all", RMX.jog);
 
-  RMX.capture("rate", "all", function(g, e, v) {
-    var rate = v / 255;
+  RMX.capture("rate", "all", function(group, control, value) {
+    if (!RMX.rightRateFaderEnabled && parseInt(group.substring(8, 9)) == 2) {
+      return;
+    }
+
+    var rate = value / 255;
     // ensure half of the slider is 0.5
-    if (127 == v) {
+    if (127 == value) {
       rate = 0.5;
     }
-    engine.setParameter(g, e, rate);
+    engine.setParameter(group, control, rate);
   });
   
   // led feedback
