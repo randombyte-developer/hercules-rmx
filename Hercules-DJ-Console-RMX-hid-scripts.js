@@ -104,7 +104,7 @@ RMX.init = function() {
 
   RMX.capture("filterHighKill", "all", function(group, control, value) {
     engine.setValue(group, control, value);
-    if (RMX.shift) {
+    if (value && RMX.shift) {
       RMX.rightRateFaderEnabled = !RMX.rightRateFaderEnabled;
     }
   });
