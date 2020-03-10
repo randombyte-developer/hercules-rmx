@@ -10,9 +10,7 @@
 RMX = new Controller();
 
 RMX.controls  = [];
-RMX.leds      = [];
 RMX.cacheIn  = [];
-RMX.cacheOut = [];
 RMX.callbacks = [];
 
 //State variables:
@@ -30,7 +28,12 @@ RMX.jogSkip =  {
 
 RMX.shift = false; // controlled via source button
 RMX.crossfaderEnabled = true;
-RMX.rightRateFaderEnabled = true; // the fader is a little bit broken, play safe and provide a shutoff button
+
+// timers simulate the movement of a jogwheel, the right one is broken and disabled
+RMX.jogTimers = {
+  "[Channel1]": -1,
+  "[Channel2]": -1
+};
 
 // the actual mapping is defined in this function
 RMX.init = function() {
@@ -40,6 +43,10 @@ RMX.init = function() {
 
   function continousControl(g, e, v) {
     engine.setParameter(g, e, v / 255);
+  }
+
+  function getChannelNumberFromGroup(groupString) {
+    return parseInt(groupString.substring(8, 9));
   }
 
   function setControlFunction(overrideControl, overrideGroup) {
@@ -68,6 +75,26 @@ RMX.init = function() {
     };
   }
 
+  function jogButtonFunction(direction) {
+    return function (group, _control, value) {
+      var timerId = RMX.jogTimers[group];
+      if (timerId != -1) {
+        engine.stopTimer(timerId);
+      }
+      if (value) {
+        RMX.jogTimers[group] = engine.beginTimer(20, function () {
+          if (RMX.shift) {
+            var rate = engine.getValue(group, "rate");
+            rate = rate + direction * 0.001;
+            engine.setValue(group, "rate", rate);
+          } else {
+            engine.setValue(group, "jog", -1 * direction);
+          }
+        }, false);
+      }
+    };
+  }
+
   function beatjumpButton(control, factor) {
     return function(group) {
       if (RMX.shift) {
@@ -92,6 +119,7 @@ RMX.init = function() {
   RMX.capture("play", "press", toggleControlFunction());
   RMX.capture("beatsync", "press", setControlFunction());
   RMX.capture("headphone_cue", "press", toggleControlFunction("pfl"));
+  RMX.capture("cue_default", "all", hotcueFunction(1));
   RMX.capture("menu_up", "press", navigateLibrary(-1));
   RMX.capture("menu_down", "press", navigateLibrary(1));
   RMX.capture("menu_left", "press", setControlFunction("SelectPrevPlaylist", "[Playlist]"));
@@ -99,8 +127,8 @@ RMX.init = function() {
   RMX.capture("LoadSelectedTrack", "press", setControlFunction());
   RMX.capture("stop", "press", setControlFunction("eject"));
 
-  RMX.capture("pitch_reset", "all", hotcueFunction(1));
-  RMX.capture("beatlock", "all", hotcueFunction(2));
+  RMX.capture("pitch_reset", "all", jogButtonFunction(-1));
+  RMX.capture("beatlock", "all", jogButtonFunction(+1));
 
   RMX.capture("filterHighKill", "all", function(group, control, value) {
     engine.setValue(group, control, value);
@@ -117,6 +145,11 @@ RMX.init = function() {
     engine.setValue(group, "beatloop_" + beatloopSize + "_toggle", 1);
   });
   RMX.capture("keypad3", "press", setControlFunction("loop_halve"));
+  RMX.capture("keypad4", "press", function (group) {
+    if (RMX.shift) {
+      engine.setValue(group, "rate", 0); // reset rate
+    }
+  });
   RMX.capture("keypad5", "all", setControlFunction("beatlooproll_0.5_activate"));
   RMX.capture("keypad6", "press", setControlFunction("loop_double"));
 
@@ -125,7 +158,6 @@ RMX.init = function() {
   
   RMX.capture("scratch", "press", function(g, e, v) {
     RMX.scratchEnabled = !RMX.scratchEnabled;
-    RMX.send(g, e, RMX.scratchEnabled ? 1: 0);
   });
 
   RMX.capture("source", "all", function(group, control, value) {
@@ -138,8 +170,6 @@ RMX.init = function() {
     }
 
     RMX.shift = value;
-    RMX.send("[Channel1]", "source", RMX.shift);
-    RMX.send("[Channel2]", "source", RMX.shift);
   });
 
   // faders / knobs
@@ -157,7 +187,7 @@ RMX.init = function() {
 
   RMX.capture("pregain", "all", function(group, control, value) {
     var enabled = value > 0;
-    var channel = parseInt(group.substring(8, 9));
+    var channel = getChannelNumberFromGroup(group);
     var effectGroup = "[EffectRack1_EffectUnit" + channel + "_Effect1]";
     engine.setValue(effectGroup, "enabled", enabled);
     engine.setParameter(effectGroup, "meta", value / 255);
@@ -166,7 +196,7 @@ RMX.init = function() {
   RMX.capture("jog", "all", RMX.jog);
 
   RMX.capture("rate", "all", function(group, control, value) {
-    if (!RMX.rightRateFaderEnabled && parseInt(group.substring(8, 9)) == 2) {
+    if (getChannelNumberFromGroup(group) == 2) { // ignore right tempo fader, it's broken
       return;
     }
 
@@ -177,23 +207,6 @@ RMX.init = function() {
     }
     engine.setParameter(group, control, rate);
   });
-  
-  // led feedback
-  function sendFeedbackFunction(overrideControl) {
-    return function(group, control, value) {
-      if (overrideControl !== undefined) control = overrideControl;
-      RMX.send(group, control, value)
-    };
-  }
-
-  for (var channelNumber = 1; channelNumber <= 2; channelNumber++) {
-    var channel = "[Channel" + channelNumber + "]";
-
-    RMX.makeConnectionAndTrigger(channel, "play", sendFeedbackFunction());
-    RMX.makeConnectionAndTrigger(channel, "pfl", sendFeedbackFunction("headphone_cue"));
-    RMX.makeConnectionAndTrigger(channel, "hotcue_1_enabled", sendFeedbackFunction("pitch_reset"));
-    RMX.makeConnectionAndTrigger(channel, "hotcue_2_enabled", sendFeedbackFunction("beatlock"));
-  }
 
   engine.softTakeover("[Channel1]", "rate", true);
   engine.softTakeover("[Channel2]", "rate", true);
@@ -219,7 +232,7 @@ RMX.jog = function(group, control, value, controlObject) {
     engine.setValue(group, "jog", relativeValue);
   } else {
     // scratching
-    var deck = parseInt(group.substring(8, 9));
+    var deck = getChannelNumberFromGroup(group);
 
     if (!RMX.scratching[group]) {
       RMX.scratching[group] = true;
@@ -231,7 +244,7 @@ RMX.jog = function(group, control, value, controlObject) {
     engine.scratchTick(deck, relativeValue);
 
     RMX.scratchTimer = engine.beginTimer(20, function() {
-      var deck = parseInt(group.substring(8, 9));
+      var deck = getChannelNumberFromGroup(group);
       RMX.scratching[group] = false;
       engine.scratchDisable(deck);
     }, true);
@@ -324,30 +337,6 @@ RMX.defineHidFormat = function() {
   RMX.addControl(pid, "filterHigh",        "[Channel2]", "fader", 22, 0xff);
   RMX.addControl(pid, "filterMid",         "[Channel2]", "fader", 23, 0xff);
   RMX.addControl(pid, "filterLow",         "[Channel2]", "fader", 24, 0xff);
-
-
-  // define led feedback
-
-  pid = 0x00;
-  RMX.cacheOut[pid] = [ pid, 0x0, 0x0, 0x0 ];
-
-  RMX.addControl(pid, "scratch",       "[Master]",   "led", 1, 0x01);
-  RMX.addControl(pid, "play",          "[Channel1]", "led", 1, 0x02);
-  RMX.addControl(pid, "cue_default",   "[Channel1]", "led", 1, 0x04);
-  RMX.addControl(pid, "headphone_cue", "[Channel1]", "led", 1, 0x08);
-  RMX.addControl(pid, "source",        "[Channel1]", "led", 1, 0x10);
-  RMX.addControl(pid, "beatsync",      "[Channel1]", "led", 1, 0x20);
-  RMX.addControl(pid, "beatlock",      "[Channel1]", "led", 1, 0x40);
-  RMX.addControl(pid, "pitch_reset",   "[Channel1]", "led", 1, 0x80);
-
-  // 2, 0x01: all off
-  RMX.addControl(pid, "play",          "[Channel2]", "led", 2, 0x02);
-  RMX.addControl(pid, "cue_default",   "[Channel2]", "led", 2, 0x04);
-  RMX.addControl(pid, "headphone_cue", "[Channel2]", "led", 2, 0x08);
-  RMX.addControl(pid, "source",        "[Channel2]", "led", 2, 0x10);
-  RMX.addControl(pid, "beatsync",      "[Channel2]", "led", 2, 0x20);
-  RMX.addControl(pid, "beatlock",      "[Channel2]", "led", 2, 0x80);
-  RMX.addControl(pid, "pitch_reset",   "[Channel2]", "led", 2, 0x40);
 };
 
 /**
@@ -356,14 +345,10 @@ RMX.defineHidFormat = function() {
  */
 
 RMX.addControl = function(packetId, name, group, type, offset, mask) {
-  if (type == "led") {
-    RMX.leds[group + name] = new RMX.Control(packetId, name, group, type, offset, mask);
-  } else {
-    if (RMX.controls[offset] === undefined) {
-      RMX.controls[offset] = [];
-    }
-    RMX.controls[offset].push(new RMX.Control(packetId, name, group, type, offset, mask));
+  if (RMX.controls[offset] === undefined) {
+    RMX.controls[offset] = [];
   }
+  RMX.controls[offset].push(new RMX.Control(packetId, name, group, type, offset, mask)); 
 };
 
 // bind a function to a modified controller value
@@ -381,25 +366,6 @@ RMX.makeConnectionAndTrigger = function(group, control, func) {
   engine.makeConnection(group, control, function(value, group, control) {
     func(group, control, value);
   }).trigger();
-};
-
-// controller feedback: send data to the controller by name and automatically
-// send out the full hid packet needed
-
-RMX.send = function(group, control, value) {
-  if ((ctrl = this.leds[group + control]) !== undefined) {
-
-    // for the byte in the hid packet that this led control affects, mask out
-    // it's old value
-    // and then add in it's new one
-
-    var tmp = this.cacheOut[ctrl.packetId];
-
-    tmp[ctrl.offset] = tmp[ctrl.offset] & ctrl.maskinv | (value << ctrl.bitshift);
-
-    // send complete hid packet
-    controller.send(tmp, tmp.length, 0);
-  }
 };
 
 // a single hid control, store last known value and offset/mask to work out the
