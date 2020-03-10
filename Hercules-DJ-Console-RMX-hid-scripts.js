@@ -10,16 +10,12 @@
 RMX = new Controller();
 
 RMX.controls  = [];
-RMX.cacheIn  = [];
+RMX.leds      = [];
+RMX.cacheIn   = [];
+RMX.cacheOut  = [];
 RMX.callbacks = [];
 
 //State variables:
-RMX.scratchEnabled = false;
-
-RMX.scratching = {
-  "[Channel1]": false,
-  "[Channel2]": false
-};
 
 RMX.jogSkip =  {
   "[Channel1]": true,
@@ -155,10 +151,6 @@ RMX.init = function() {
 
   RMX.capture("previous", "press", beatjumpButton("beatjump_backward", 0.5));
   RMX.capture("next", "press", beatjumpButton("beatjump_forward", 2));
-  
-  RMX.capture("scratch", "press", function(g, e, v) {
-    RMX.scratchEnabled = !RMX.scratchEnabled;
-  });
 
   RMX.capture("source", "all", function(group, control, value) {
     if (RMX.shift && value) {
@@ -208,8 +200,13 @@ RMX.init = function() {
     engine.setParameter(group, control, rate);
   });
 
-  engine.softTakeover("[Channel1]", "rate", true);
-  engine.softTakeover("[Channel2]", "rate", true);
+  engine.softTakeover("[Channel1]", "rate", true); // soft takeover only needed for the left fader, because the right on is broken
+
+  for (var i = 1; i <= 2; i++) {
+    engine.makeConnection("[Channel" + i + "]", "pfl", function(value, group, control) {
+      RMX.send(group, "headphone_cue", value);
+    }).trigger();
+  }
 };
 
 RMX.jog = function(group, control, value, controlObject) {
@@ -227,28 +224,7 @@ RMX.jog = function(group, control, value, controlObject) {
     return;
   }
 
-  if (!RMX.scratchEnabled) {
-    // rate adjustment
-    engine.setValue(group, "jog", relativeValue);
-  } else {
-    // scratching
-    var deck = getChannelNumberFromGroup(group);
-
-    if (!RMX.scratching[group]) {
-      RMX.scratching[group] = true;
-      var rpm = RMX.shift ? 5 : 40;
-      engine.scratchEnable(deck, 128, rpm, 1.0/8, (1.0/8)/32);
-    } else {
-      engine.stopTimer(RMX.scratchTimer); // disable timer which would disable scratching
-    }
-    engine.scratchTick(deck, relativeValue);
-
-    RMX.scratchTimer = engine.beginTimer(20, function() {
-      var deck = getChannelNumberFromGroup(group);
-      RMX.scratching[group] = false;
-      engine.scratchDisable(deck);
-    }, true);
-  }
+  engine.setValue(group, "jog", relativeValue);
 };
 
 /**
@@ -337,6 +313,16 @@ RMX.defineHidFormat = function() {
   RMX.addControl(pid, "filterHigh",        "[Channel2]", "fader", 22, 0xff);
   RMX.addControl(pid, "filterMid",         "[Channel2]", "fader", 23, 0xff);
   RMX.addControl(pid, "filterLow",         "[Channel2]", "fader", 24, 0xff);
+
+  // define led feedback
+
+  pid = 0x00;
+  RMX.cacheOut[pid] = [ pid, 0x0, 0x0, 0x0 ];
+
+  RMX.addControl(pid, "headphone_cue", "[Channel1]", "led", 1, 0x08);
+
+  // 2, 0x01: all off
+  RMX.addControl(pid, "headphone_cue", "[Channel2]", "led", 2, 0x08);
 };
 
 /**
@@ -345,10 +331,14 @@ RMX.defineHidFormat = function() {
  */
 
 RMX.addControl = function(packetId, name, group, type, offset, mask) {
-  if (RMX.controls[offset] === undefined) {
-    RMX.controls[offset] = [];
+  if (type == "led") {
+    RMX.leds[group + name] = new RMX.Control(packetId, name, group, type, offset, mask);
+  } else {
+    if (RMX.controls[offset] === undefined) {
+      RMX.controls[offset] = [];
+    }
+    RMX.controls[offset].push(new RMX.Control(packetId, name, group, type, offset, mask)); 
   }
-  RMX.controls[offset].push(new RMX.Control(packetId, name, group, type, offset, mask)); 
 };
 
 // bind a function to a modified controller value
@@ -366,6 +356,23 @@ RMX.makeConnectionAndTrigger = function(group, control, func) {
   engine.makeConnection(group, control, function(value, group, control) {
     func(group, control, value);
   }).trigger();
+};
+
+
+RMX.send = function(group, control, value) {
+  if ((ctrl = this.leds[group + control]) !== undefined) {
+
+    // for the byte in the hid packet that this led control affects, mask out
+    // it's old value
+    // and then add in it's new one
+
+    var tmp = this.cacheOut[ctrl.packetId];
+
+    tmp[ctrl.offset] = tmp[ctrl.offset] & ctrl.maskinv | (value << ctrl.bitshift);
+
+    // send complete hid packet
+    controller.send(tmp, tmp.length, 0);
+  }
 };
 
 // a single hid control, store last known value and offset/mask to work out the
