@@ -111,15 +111,24 @@ RMX.init = function() {
     };
   }
 
+  function navigateLibraryTopLevel(direction) {
+    return function() {
+      var distance = RMX.shift ? 5 : 1;
+      for (var i = 0; i < distance; i++) { // we have to do it that way because the SelectPlaylist control object ignores any value above 1
+        engine.setValue("[Playlist]", "SelectPlaylist", direction);
+      }
+    };
+  }
+
   // buttons
   RMX.capture("play", "press", toggleControlFunction());
   RMX.capture("beatsync", "press", setControlFunction());
   RMX.capture("headphone_cue", "press", toggleControlFunction("pfl"));
   RMX.capture("cue_default", "all", hotcueFunction(1));
   RMX.capture("menu_up", "press", navigateLibrary(-1));
-  RMX.capture("menu_down", "press", navigateLibrary(1));
-  RMX.capture("menu_left", "press", setControlFunction("SelectPrevPlaylist", "[Playlist]"));
-  RMX.capture("menu_right", "press", setControlFunction("SelectNextPlaylist", "[Playlist]"));
+  RMX.capture("menu_down", "press", navigateLibrary(+1));
+  RMX.capture("menu_left", "press", navigateLibraryTopLevel(-1));
+  RMX.capture("menu_right", "press", navigateLibraryTopLevel(+1));
   RMX.capture("LoadSelectedTrack", "press", setControlFunction());
   RMX.capture("stop", "press", setControlFunction("eject"));
 
